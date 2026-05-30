@@ -1,48 +1,153 @@
 #!/usr/bin/env bash
 # ============================================================
-#   KONTROL HP ANDROID v5.0 
-#
-#   INSTALASI :
-#   1. chmod +x kontrol_hp.sh
-#   2. sudo cp kontrol_hp.sh /usr/local/bin/kontrol_hp
-#   3. Jalankan: kontrol_hp
+#   KONTROL HP ANDROID v6.0 - Linux / Kali Linux
+#   Kompatibel: Kali, Ubuntu, Debian, Parrot, Arch
 # ============================================================
 
 HP_IP=""
-LOGFILE="$HOME/hp_history.txt"
+LOGFILE="$HOME/hp_history.log"
 DESKTOP="$HOME/Desktop"
+[[ ! -d "$DESKTOP" ]] && DESKTOP="$HOME"
 
-# Warna terminal
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-BOLD='\033[1m'
+# ── Warna ──
+G='\033[0;32m'   # Hijau
+C='\033[0;36m'   # Cyan
+R='\033[0;31m'   # Merah
+Y='\033[1;33m'   # Kuning
+B='\033[0;34m'   # Biru
+P='\033[0;35m'   # Ungu
+W='\033[1;37m'   # Putih tebal
+NC='\033[0m'     # Reset
 
-# Pastikan adb tersedia
-check_adb() {
-    if ! command -v adb &> /dev/null; then
-        echo -e "${RED}[ERROR] ADB tidak ditemukan. Install dengan:${NC}"
-        echo "  sudo apt install adb          (Debian/Ubuntu)"
-        echo "  sudo pacman -S android-tools  (Arch)"
-        echo "  sudo dnf install android-tools (Fedora)"
+# ── Cari terminal yang tersedia di sistem ──
+cari_terminal() {
+    for T in x-terminal-emulator xterm gnome-terminal konsole xfce4-terminal lxterminal qterminal mate-terminal; do
+        command -v "$T" &>/dev/null && echo "$T" && return
+    done
+    echo "none"
+}
+TERMINAL=$(cari_terminal)
+
+# ── Buka jendela terminal baru ──
+buka_terminal() {
+    local JUDUL="$1"
+    local PERINTAH="$2"
+    local TMPFILE
+    TMPFILE=$(mktemp /tmp/hp_XXXXXX.sh)
+    echo "#!/bin/bash" > "$TMPFILE"
+    echo "$PERINTAH" >> "$TMPFILE"
+    echo "read -rp 'Tekan Enter untuk tutup...'" >> "$TMPFILE"
+    chmod +x "$TMPFILE"
+
+    case "$TERMINAL" in
+        x-terminal-emulator) x-terminal-emulator -T "$JUDUL" -e "bash $TMPFILE" & ;;
+        xterm)               xterm -title "$JUDUL" -e "bash $TMPFILE" & ;;
+        gnome-terminal)      gnome-terminal --title="$JUDUL" -- bash "$TMPFILE" & ;;
+        konsole)             konsole --title "$JUDUL" -e bash "$TMPFILE" & ;;
+        xfce4-terminal)      xfce4-terminal --title="$JUDUL" -e "bash $TMPFILE" & ;;
+        lxterminal)          lxterminal --title="$JUDUL" -e "bash $TMPFILE" & ;;
+        qterminal)           qterminal -e "bash $TMPFILE" & ;;
+        mate-terminal)       mate-terminal --title="$JUDUL" -e "bash $TMPFILE" & ;;
+        none)
+            # Fallback: tmux atau inline
+            if command -v tmux &>/dev/null && [ -n "$TMUX" ]; then
+                tmux new-window -n "$JUDUL" "bash $TMPFILE"
+            else
+                echo -e "${Y}[INFO] Tidak ada terminal GUI. Membuka di sini.${NC}"
+                bash "$TMPFILE"
+            fi
+            ;;
+    esac
+    sleep 0.5
+}
+
+# ── Cek ADB ──
+cek_adb() {
+    if ! command -v adb &>/dev/null; then
+        echo -e "${R}[ERROR] ADB tidak ditemukan.${NC}"
+        echo -e "${Y}Install:${NC}"
+        echo "  sudo apt install adb              (Kali/Debian/Ubuntu)"
+        echo "  sudo pacman -S android-tools      (Arch)"
+        echo "  sudo dnf install android-tools    (Fedora)"
         exit 1
     fi
 }
 
-adb_run() {
-    adb -s "${HP_IP}:5555" "$@"
+# ── Cek & install scrcpy ──
+cek_scrcpy() {
+    if ! command -v scrcpy &>/dev/null; then
+        echo -e "${Y}[INFO] scrcpy belum terinstall.${NC}"
+        read -rp "Install sekarang? (y/n): " INS
+        if [[ "${INS,,}" == "y" ]]; then
+            sudo apt update -qq && sudo apt install -y scrcpy 2>/dev/null || \
+            sudo snap install scrcpy 2>/dev/null || \
+            echo -e "${R}[GAGAL] Install manual: https://github.com/Genymobile/scrcpy/releases${NC}"
+        fi
+    fi
 }
 
-log_action() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOGFILE"
-}
+# ── ADB helper ──
+arun() { adb -s "${HP_IP}:5555" "$@"; }
+ashell() { adb -s "${HP_IP}:5555" shell "$@"; }
 
-pause() {
+# ── Log ──
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOGFILE"; }
+
+# ── Lanjut ──
+lanjut() { echo -e "\n${C}Tekan Enter untuk kembali...${NC}"; read -r; }
+
+# ── Header ──
+header() {
+    clear
+    echo -e "${P}================================================${NC}"
+    echo -e "${W}  KONTROL HP ANDROID v6.0${NC}"
+    echo -e "${C}  Terminal: ${Y}$TERMINAL${NC}"
+    echo -e "${C}  IP HP   : ${Y}${HP_IP:-[belum terhubung]}${NC}"
+    echo -e "${P}================================================${NC}"
     echo ""
-    read -rp "Tekan Enter untuk melanjutkan..."
+}
+
+# ── ADB Bebas loop (bisa di jendela ini atau baru) ──
+adb_bebas_loop() {
+    local JUDUL="${1:-ADB Bebas}"
+    echo -e "${B}=============================="
+    echo -e "  $JUDUL - $HP_IP"
+    echo -e "  Ketik 'exit' untuk kembali"
+    echo -e "==============================${NC}"
+    echo ""
+    while true; do
+        read -rp "$(echo -e "${G}adb shell \$ ${NC}")" CMD
+        [[ "${CMD,,}" == "exit" || "${CMD,,}" == "quit" ]] && break
+        [[ -z "$CMD" ]] && continue
+        log "ADB: $CMD"
+        adb -s "${HP_IP}:5555" shell $CMD
+        echo ""
+    done
+}
+
+# ── ADB Bebas di jendela baru ──
+adb_bebas_baru() {
+    local JUDUL="${1:-ADB Bebas}"
+    local CMD_BLOK
+    CMD_BLOK=$(cat << INNEREOF
+echo -e '\033[0;34m=============================='
+echo "  $JUDUL"
+echo "  IP: $HP_IP"
+echo "  Ketik exit untuk tutup"
+echo -e '==============================\033[0m'
+echo ""
+while true; do
+    read -rp "\$(echo -e '\033[0;32madb shell \$ \033[0m')" CMD
+    [[ "\${CMD,,}" == "exit" || "\${CMD,,}" == "quit" ]] && break
+    [[ -z "\$CMD" ]] && continue
+    adb -s "${HP_IP}:5555" shell \$CMD
+    echo ""
+done
+INNEREOF
+)
+    buka_terminal "$JUDUL" "$CMD_BLOK"
+    echo -e "${G}[OK] Jendela '$JUDUL' dibuka ($TERMINAL).${NC}"
+    lanjut
 }
 
 # ============================================================
@@ -50,32 +155,26 @@ pause() {
 # ============================================================
 menu_utama() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo -e "  ${BOLD}KONTROL HP ANDROID v5.0${NC}${GREEN}"
-        echo "  IP: ${HP_IP:-[belum terhubung]}"
-        echo "================================================"
-        echo -e "${NC}"
-        echo "  [1]  Hubungkan ke HP"
-        echo "  [2]  Layar HP di Laptop"
-        echo "  [3]  Daya HP"
-        echo "  [4]  Navigasi dan Input"
-        echo "  [5]  Audio dan Volume"
-        echo "  [6]  Aplikasi"
-        echo "  [7]  Kirim Pesan"
-        echo "  [8]  File Manager"
-        echo "  [9]  Info dan Status HP"
-        echo "  [10] Lokasi HP"
-        echo "  [11] Notifikasi"
-        echo "  [12] Media Player"
-        echo "  [13] Kamera"
-        echo "  [14] Monitor Real-Time (background)"
-        echo "  [15] Logcat Live"
-        echo "  [16] ADB Bebas"
-        echo "  [17] History Perintah"
-        echo "  [18] Putuskan Koneksi"
-        echo "  [0]  Keluar"
+        header
+        echo -e "  ${G}[1]${NC}  Hubungkan ke HP"
+        echo -e "  ${G}[2]${NC}  Layar HP di Laptop (scrcpy)"
+        echo -e "  ${G}[3]${NC}  Daya HP"
+        echo -e "  ${G}[4]${NC}  Navigasi dan Input"
+        echo -e "  ${G}[5]${NC}  Audio dan Volume"
+        echo -e "  ${G}[6]${NC}  Aplikasi"
+        echo -e "  ${G}[7]${NC}  Kirim Pesan"
+        echo -e "  ${G}[8]${NC}  File Manager"
+        echo -e "  ${G}[9]${NC}  Info dan Status HP"
+        echo -e "  ${G}[10]${NC} Lokasi HP"
+        echo -e "  ${G}[11]${NC} Notifikasi"
+        echo -e "  ${G}[12]${NC} Media Player"
+        echo -e "  ${G}[13]${NC} Kamera"
+        echo -e "  ${C}[14]${NC} Monitor Real-Time ${Y}← jendela baru${NC}"
+        echo -e "  ${C}[15]${NC} Logcat Live       ${Y}← jendela baru${NC}"
+        echo -e "  ${C}[16]${NC} ADB Bebas         ${Y}← jendela baru${NC}"
+        echo -e "  ${C}[17]${NC} History Perintah  ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[18]${NC} Putuskan Koneksi"
+        echo -e "  ${R}[0]${NC}  Keluar"
         echo ""
         read -rp "Pilih menu [0-18]: " PILIHAN
         case "$PILIHAN" in
@@ -94,685 +193,566 @@ menu_utama() {
             13) menu_kamera ;;
             14) buka_monitor ;;
             15) buka_logcat ;;
-            16) buka_adb ;;
+            16) adb_bebas_baru "ADB Bebas" ;;
             17) buka_history ;;
             18) putuskan ;;
-            0)  keluar ;;
-            *)  ;;
+            0)  echo -e "\n${G}Sampai jumpa!${NC}\n"; exit 0 ;;
         esac
     done
 }
 
 # ============================================================
-# HUBUNGKAN
-# ============================================================
 menu_hubungkan() {
-    clear
-    echo -e "${GREEN}"
-    echo "================================================"
-    echo "  HUBUNGKAN KE HP"
-    echo -e "================================================${NC}"
-    echo ""
-    read -rp "Masukkan IP Tailscale HP: " IP
-    if [[ -z "$IP" ]]; then return; fi
-    echo ""
-    echo -e "${CYAN}[INFO] Menghubungkan ke ${IP}:5555...${NC}"
-    if adb connect "${IP}:5555"; then
+    header
+    echo -e "${C}[ HUBUNGKAN KE HP ]${NC}\n"
+    read -rp "Masukkan IP Tailscale HP (contoh: 100.xx.xx.xx): " IP
+    [[ -z "$IP" ]] && return
+    echo -e "\n${Y}[INFO] Menghubungkan ke $IP:5555...${NC}"
+    OUT=$(adb connect "$IP:5555" 2>&1)
+    echo "$OUT"
+    if echo "$OUT" | grep -qi "connected"; then
         HP_IP="$IP"
-        echo -e "${GREEN}[OK] Berhasil terhubung!${NC}"
-        log_action "CONNECT $IP"
+        echo -e "${G}[OK] Berhasil terhubung!${NC}"
+        log "CONNECT $IP OK"
     else
-        echo -e "${RED}[GAGAL] Pastikan Tailscale aktif di HP.${NC}"
+        echo -e "${R}[GAGAL] Pastikan Tailscale aktif dan USB Debugging ON.${NC}"
+        echo -e "${Y}Coba: adb kill-server && adb start-server${NC}"
     fi
-    pause
+    lanjut
 }
 
 # ============================================================
-# LAYAR HP
-# ============================================================
 menu_layar() {
+    # Pastikan DISPLAY tersedia untuk scrcpy
+    if [[ -z "$DISPLAY" && -z "$WAYLAND_DISPLAY" ]]; then
+        export DISPLAY=:0
+    fi
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  LAYAR HP DI LAPTOP   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
-        echo ""
-        echo "  [1] Layar HP - audio di laptop"
-        echo "  [2] Layar HP - audio di HP"
-        echo "  [3] Layar HP - audio keduanya"
-        echo "  [4] Layar HP - tanpa audio"
-        echo "  [5] Mode landscape fullscreen"
-        echo "  [6] Mode cermin (tidak bisa kontrol)"
-        echo "  [7] Matikan tampilan layar"
-        echo "  [8] ADB Bebas"
-        echo "  [0] Kembali"
+        header
+        echo -e "${C}[ LAYAR HP DI LAPTOP ]${NC}\n"
+        echo -e "  ${G}[1]${NC} Tampilkan layar - audio di laptop"
+        echo -e "  ${G}[2]${NC} Tampilkan layar - audio di HP"
+        echo -e "  ${G}[3]${NC} Tampilkan layar - audio keduanya"
+        echo -e "  ${G}[4]${NC} Tampilkan layar - tanpa audio"
+        echo -e "  ${G}[5]${NC} Mode landscape fullscreen"
+        echo -e "  ${G}[6]${NC} Mode cermin (tidak bisa kontrol)"
+        echo -e "  ${G}[7]${NC} Matikan tampilan layar"
+        echo -e "  ${C}[8]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC} Kembali"
         echo ""
         read -rp "Pilih [0-8]: " P
         case "$P" in
-            1) scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --audio-codec=aac &
-               echo -e "${GREEN}[OK] Layar HP ditampilkan - audio di laptop.${NC}" ; pause ;;
-            2) scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --no-audio &
-               echo -e "${GREEN}[OK] Layar HP ditampilkan - audio di HP.${NC}" ; pause ;;
-            3) scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --audio-codec=aac --audio-output=both &
-               echo -e "${GREEN}[OK] Layar HP ditampilkan - audio keduanya.${NC}" ; pause ;;
-            4) scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --no-audio &
-               echo -e "${GREEN}[OK] Layar HP ditampilkan tanpa audio.${NC}" ; pause ;;
-            5) scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --no-audio --fullscreen --orientation=1 &
-               echo -e "${GREEN}[OK] Mode landscape aktif.${NC}" ; pause ;;
-            6) scrcpy --tcpip="${HP_IP}:5555" --window-title "Layar-HP" --no-audio --no-control &
-               echo -e "${GREEN}[OK] Mode cermin aktif.${NC}" ; pause ;;
-            7) pkill scrcpy 2>/dev/null
-               echo -e "${GREEN}[OK] Tampilan dimatikan.${NC}" ; pause ;;
-            8) adb_bebas_inline ;;
+            1) scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --audio-codec=aac &>/dev/null &
+               echo -e "${G}[OK] Layar HP ditampilkan - audio di laptop.${NC}"; lanjut ;;
+            2) scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --no-audio &>/dev/null &
+               echo -e "${G}[OK] Layar HP ditampilkan - audio di HP.${NC}"; lanjut ;;
+            3) scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --audio-codec=aac --audio-output=both &>/dev/null &
+               echo -e "${G}[OK] Audio keduanya.${NC}"; lanjut ;;
+            4) scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --no-audio &>/dev/null &
+               echo -e "${G}[OK] Tanpa audio.${NC}"; lanjut ;;
+            5) scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --no-audio --fullscreen --orientation=1 &>/dev/null &
+               echo -e "${G}[OK] Landscape.${NC}"; lanjut ;;
+            6) scrcpy --tcpip="${HP_IP}:5555" --window-title "Layar-HP" --no-audio --no-control &>/dev/null &
+               echo -e "${G}[OK] Mode cermin.${NC}"; lanjut ;;
+            7) pkill -f scrcpy 2>/dev/null; echo -e "${G}[OK] Tampilan dimatikan.${NC}"; lanjut ;;
+            8) adb_bebas_baru "ADB Bebas - Layar" ;;
             0) return ;;
         esac
     done
 }
 
-# ============================================================
-# DAYA HP
 # ============================================================
 menu_daya() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  DAYA HP   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
-        echo ""
-        echo "  [1] Tidurkan layar (HP tetap nyala)"
-        echo "  [2] Nyalakan layar"
-        echo "  [3] Kunci layar"
-        echo "  [4] Restart HP"
-        echo "  [5] MATIKAN HP SEPENUHNYA (2 langkah)"
-        echo "  [8] ADB Bebas"
-        echo "  [0] Kembali"
+        header
+        echo -e "${C}[ DAYA HP ]${NC}\n"
+        echo -e "  ${G}[1]${NC} Tidurkan layar (HP tetap nyala)"
+        echo -e "  ${G}[2]${NC} Nyalakan layar"
+        echo -e "  ${G}[3]${NC} Kunci layar"
+        echo -e "  ${G}[4]${NC} Restart HP"
+        echo -e "  ${R}[5]${NC} MATIKAN HP SEPENUHNYA (2 langkah)"
+        echo -e "  ${C}[8]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC} Kembali"
         echo ""
         read -rp "Pilih [0-8]: " P
         case "$P" in
-            1) adb_run shell input keyevent 223
-               echo -e "${GREEN}[OK] Layar dimatikan. HP tetap nyala.${NC}" ; pause ;;
-            2) adb_run shell input keyevent 224
-               echo -e "${GREEN}[OK] Layar dinyalakan.${NC}" ; pause ;;
-            3) adb_run shell input keyevent 276
-               echo -e "${GREEN}[OK] Layar dikunci.${NC}" ; pause ;;
-            4)
-               read -rp "Ketik YES untuk restart HP: " K
-               if [[ "${K^^}" == "YES" ]]; then
-                   adb_run shell reboot
-                   echo -e "${GREEN}[OK] HP restart.${NC}"
-               else echo -e "${YELLOW}[BATAL]${NC}"; fi
-               pause ;;
-            5)
-               clear
-               echo -e "${RED}  PERINGATAN - HP akan MATI TOTAL${NC}"
-               echo ""
+            1) ashell input keyevent 223; echo -e "${G}[OK] Layar dimatikan. HP tetap nyala.${NC}"; lanjut ;;
+            2) ashell input keyevent 224; echo -e "${G}[OK] Layar dinyalakan.${NC}"; lanjut ;;
+            3) ashell input keyevent 276; echo -e "${G}[OK] Layar dikunci.${NC}"; lanjut ;;
+            4) read -rp "Ketik YES untuk restart: " K
+               [[ "${K^^}" == "YES" ]] && ashell reboot && echo -e "${G}[OK] HP restart.${NC}" || echo -e "${Y}[BATAL]${NC}"
+               lanjut ;;
+            5) echo -e "\n${R}PERINGATAN - HP akan MATI TOTAL${NC}"
                read -rp "LANGKAH 1 - Ketik MATIKAN: " K1
-               if [[ "${K1^^}" != "MATIKAN" ]]; then echo -e "${YELLOW}[BATAL]${NC}"; pause; continue; fi
+               [[ "${K1^^}" != "MATIKAN" ]] && echo -e "${Y}[BATAL]${NC}" && lanjut && continue
                read -rp "LANGKAH 2 - Ketik YAKIN: " K2
-               if [[ "${K2^^}" != "YAKIN" ]]; then echo -e "${YELLOW}[BATAL]${NC}"; pause; continue; fi
-               adb_run shell reboot -p
-               echo -e "${GREEN}[OK] HP dimatikan.${NC}" ; pause ;;
-            8) adb_bebas_inline ;;
+               [[ "${K2^^}" != "YAKIN" ]] && echo -e "${Y}[BATAL]${NC}" && lanjut && continue
+               ashell reboot -p; echo -e "${G}[OK] HP dimatikan.${NC}"; lanjut ;;
+            8) adb_bebas_baru "ADB Bebas - Daya" ;;
             0) return ;;
         esac
     done
 }
 
 # ============================================================
-# NAVIGASI DAN INPUT
-# ============================================================
 menu_navigasi() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  NAVIGASI DAN INPUT   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
-        echo ""
-        echo "  [1] Home              [7]  Scroll atas"
-        echo "  [2] Back              [8]  Scroll bawah"
-        echo "  [3] Recent Apps       [9]  Scroll kanan"
-        echo "  [4] Enter             [10] Scroll kiri"
-        echo "  [5] Ketik teks ke HP  [11] Tap koordinat"
-        echo "  [6] Screenshot        [12] Swipe kustom"
-        echo "  [13] ADB Bebas"
-        echo "  [0] Kembali"
+        header
+        echo -e "${C}[ NAVIGASI DAN INPUT ]${NC}\n"
+        echo -e "  ${G}[1]${NC}  Home              ${G}[7]${NC}  Scroll atas"
+        echo -e "  ${G}[2]${NC}  Back              ${G}[8]${NC}  Scroll bawah"
+        echo -e "  ${G}[3]${NC}  Recent Apps       ${G}[9]${NC}  Scroll kanan"
+        echo -e "  ${G}[4]${NC}  Enter             ${G}[10]${NC} Scroll kiri"
+        echo -e "  ${G}[5]${NC}  Ketik teks ke HP  ${G}[11]${NC} Tap koordinat"
+        echo -e "  ${G}[6]${NC}  Screenshot        ${G}[12]${NC} Swipe kustom"
+        echo -e "  ${C}[13]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC}  Kembali"
         echo ""
         read -rp "Pilih [0-13]: " P
         case "$P" in
-            1)  adb_run shell input keyevent 3   ; echo -e "${GREEN}[OK] Home.${NC}"   ; pause ;;
-            2)  adb_run shell input keyevent 4   ; echo -e "${GREEN}[OK] Back.${NC}"   ; pause ;;
-            3)  adb_run shell input keyevent 187 ; echo -e "${GREEN}[OK] Recent.${NC}" ; pause ;;
-            4)  adb_run shell input keyevent 66  ; echo -e "${GREEN}[OK] Enter.${NC}"  ; pause ;;
-            5)
-                read -rp "Ketik teks: " TEKS
-                adb_run shell input text "$TEKS"
-                echo -e "${GREEN}[OK] Teks terkirim.${NC}" ; pause ;;
-            6)
-                echo -e "${CYAN}[INFO] Mengambil screenshot...${NC}"
-                adb_run shell screencap -p /sdcard/ss.png
-                sleep 2
-                mkdir -p "$DESKTOP"
-                adb_run pull /sdcard/ss.png "$DESKTOP/screenshot_hp.png"
-                if [[ -f "$DESKTOP/screenshot_hp.png" ]]; then
-                    echo -e "${GREEN}[OK] Screenshot disimpan di Desktop!${NC}"
-                    xdg-open "$DESKTOP/screenshot_hp.png" 2>/dev/null &
-                else echo -e "${RED}[GAGAL] Coba lagi.${NC}"; fi
-                pause ;;
-            7)  adb_run shell input swipe 500 800 500 300 300 ; echo -e "${GREEN}[OK] Scroll atas.${NC}"  ; pause ;;
-            8)  adb_run shell input swipe 500 300 500 800 300 ; echo -e "${GREEN}[OK] Scroll bawah.${NC}" ; pause ;;
-            9)  adb_run shell input swipe 200 500 800 500 300 ; echo -e "${GREEN}[OK] Scroll kanan.${NC}" ; pause ;;
-            10) adb_run shell input swipe 800 500 200 500 300 ; echo -e "${GREEN}[OK] Scroll kiri.${NC}"  ; pause ;;
-            11)
-                read -rp "X: " NX ; read -rp "Y: " NY
-                adb_run shell input tap "$NX" "$NY"
-                echo -e "${GREEN}[OK] Tap (${NX},${NY}).${NC}" ; pause ;;
-            12)
-                read -rp "Dari X: " SX1 ; read -rp "Dari Y: " SY1
-                read -rp "Ke X: " SX2   ; read -rp "Ke Y: " SY2
-                read -rp "Durasi ms: " SD
-                adb_run shell input swipe "$SX1" "$SY1" "$SX2" "$SY2" "$SD"
-                echo -e "${GREEN}[OK] Swipe selesai.${NC}" ; pause ;;
-            13) adb_bebas_inline ;;
+            1)  ashell input keyevent 3;   echo -e "${G}[OK] Home.${NC}";   lanjut ;;
+            2)  ashell input keyevent 4;   echo -e "${G}[OK] Back.${NC}";   lanjut ;;
+            3)  ashell input keyevent 187; echo -e "${G}[OK] Recent.${NC}"; lanjut ;;
+            4)  ashell input keyevent 66;  echo -e "${G}[OK] Enter.${NC}";  lanjut ;;
+            5)  read -rp "Ketik teks: " TEKS
+                ashell input text "$TEKS"; echo -e "${G}[OK] Teks terkirim.${NC}"; lanjut ;;
+            6)  echo -e "${Y}[INFO] Mengambil screenshot...${NC}"
+                ashell screencap -p /sdcard/ss.png
+                sleep 1
+                arun pull /sdcard/ss.png "$DESKTOP/screenshot_hp.png"
+                echo -e "${G}[OK] Screenshot disimpan di $DESKTOP.${NC}"; lanjut ;;
+            7)  ashell input swipe 500 800 500 300 300; echo -e "${G}[OK] Scroll atas.${NC}";  lanjut ;;
+            8)  ashell input swipe 500 300 500 800 300; echo -e "${G}[OK] Scroll bawah.${NC}"; lanjut ;;
+            9)  ashell input swipe 200 500 800 500 300; echo -e "${G}[OK] Scroll kanan.${NC}"; lanjut ;;
+            10) ashell input swipe 800 500 200 500 300; echo -e "${G}[OK] Scroll kiri.${NC}";  lanjut ;;
+            11) read -rp "X: " NX; read -rp "Y: " NY
+                ashell input tap "$NX" "$NY"; echo -e "${G}[OK] Tap ($NX,$NY).${NC}"; lanjut ;;
+            12) read -rp "Dari X: " SX1; read -rp "Dari Y: " SY1
+                read -rp "Ke X: "   SX2; read -rp "Ke Y: "   SY2
+                read -rp "Durasi ms (contoh 300): " SD
+                ashell input swipe "$SX1" "$SY1" "$SX2" "$SY2" "$SD"
+                echo -e "${G}[OK] Swipe selesai.${NC}"; lanjut ;;
+            13) adb_bebas_baru "ADB Bebas - Navigasi" ;;
             0)  return ;;
         esac
     done
 }
 
-# ============================================================
-# AUDIO DAN VOLUME
 # ============================================================
 menu_audio() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  AUDIO DAN VOLUME   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
-        echo ""
-        echo "  [1] Vol dering MAX    [6] Vol naik"
-        echo "  [2] Vol dering MIN    [7] Vol turun"
-        echo "  [3] Vol media MAX     [8] Mute/Unmute"
-        echo "  [4] Vol media MIN     [9] Bunyikan HP keras"
-        echo "  [5] Vol alarm MAX     [10] Hentikan semua bunyi"
-        echo "  [11] ADB Bebas"
-        echo "  [0] Kembali"
+        header
+        echo -e "${C}[ AUDIO DAN VOLUME ]${NC}\n"
+        echo -e "  ${G}[1]${NC}  Vol dering MAX    ${G}[6]${NC}  Vol naik"
+        echo -e "  ${G}[2]${NC}  Vol dering MIN    ${G}[7]${NC}  Vol turun"
+        echo -e "  ${G}[3]${NC}  Vol media MAX     ${G}[8]${NC}  Mute/Unmute"
+        echo -e "  ${G}[4]${NC}  Vol media MIN     ${G}[9]${NC}  Bunyikan HP keras"
+        echo -e "  ${G}[5]${NC}  Vol alarm MAX     ${G}[10]${NC} Hentikan semua bunyi"
+        echo -e "  ${C}[11]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC}  Kembali"
         echo ""
         read -rp "Pilih [0-11]: " P
         case "$P" in
-            1)  adb_run shell media volume --stream 2 --set 15 ; echo -e "${GREEN}[OK] Vol dering MAX.${NC}"    ; pause ;;
-            2)  adb_run shell media volume --stream 2 --set 0  ; echo -e "${GREEN}[OK] Vol dering MIN.${NC}"    ; pause ;;
-            3)  adb_run shell media volume --stream 3 --set 15 ; echo -e "${GREEN}[OK] Vol media MAX.${NC}"     ; pause ;;
-            4)  adb_run shell media volume --stream 3 --set 0  ; echo -e "${GREEN}[OK] Vol media MIN.${NC}"     ; pause ;;
-            5)  adb_run shell media volume --stream 5 --set 15 ; echo -e "${GREEN}[OK] Vol alarm MAX.${NC}"     ; pause ;;
-            6)  adb_run shell input keyevent 24  ; echo -e "${GREEN}[OK] Volume naik.${NC}"       ; pause ;;
-            7)  adb_run shell input keyevent 25  ; echo -e "${GREEN}[OK] Volume turun.${NC}"      ; pause ;;
-            8)  adb_run shell input keyevent 164 ; echo -e "${GREEN}[OK] Mute/Unmute.${NC}"       ; pause ;;
-            9)  adb_run shell media volume --stream 2 --set 15
-                adb_run shell cmd notification post -S bigtext -t "Cari HP" Tag "HP Anda dicari!"
-                echo -e "${GREEN}[OK] HP dibunyikan.${NC}" ; pause ;;
-            10) adb_run shell media volume --stream 2 --set 0
-                adb_run shell media volume --stream 3 --set 0
-                echo -e "${GREEN}[OK] Bunyi dihentikan.${NC}" ; pause ;;
-            11) adb_bebas_inline ;;
+            1)  ashell media volume --stream 2 --set 15; echo -e "${G}[OK] Vol dering MAX.${NC}";    lanjut ;;
+            2)  ashell media volume --stream 2 --set 0;  echo -e "${G}[OK] Vol dering MIN.${NC}";    lanjut ;;
+            3)  ashell media volume --stream 3 --set 15; echo -e "${G}[OK] Vol media MAX.${NC}";     lanjut ;;
+            4)  ashell media volume --stream 3 --set 0;  echo -e "${G}[OK] Vol media MIN.${NC}";     lanjut ;;
+            5)  ashell media volume --stream 5 --set 15; echo -e "${G}[OK] Vol alarm MAX.${NC}";     lanjut ;;
+            6)  ashell input keyevent 24;  echo -e "${G}[OK] Vol naik.${NC}";    lanjut ;;
+            7)  ashell input keyevent 25;  echo -e "${G}[OK] Vol turun.${NC}";   lanjut ;;
+            8)  ashell input keyevent 164; echo -e "${G}[OK] Mute/Unmute.${NC}"; lanjut ;;
+            9)  ashell media volume --stream 2 --set 15
+                ashell cmd notification post -S bigtext -t "Cari HP" Tag "HP Anda dicari!"
+                echo -e "${G}[OK] HP dibunyikan.${NC}"; lanjut ;;
+            10) ashell media volume --stream 2 --set 0
+                ashell media volume --stream 3 --set 0
+                echo -e "${G}[OK] Semua bunyi dihentikan.${NC}"; lanjut ;;
+            11) adb_bebas_baru "ADB Bebas - Audio" ;;
             0)  return ;;
         esac
     done
 }
 
-# ============================================================
-# APLIKASI
 # ============================================================
 menu_aplikasi() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  APLIKASI   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
-        echo ""
-        echo "  [1]  WhatsApp      [10] TikTok"
-        echo "  [2]  Instagram     [11] Gmail"
-        echo "  [3]  YouTube       [12] Telegram"
-        echo "  [4]  Chrome        [13] Facebook"
-        echo "  [5]  Kamera        [14] Google Maps"
-        echo "  [6]  Galeri        [15] Tutup paksa app"
-        echo "  [7]  Pengaturan    [16] Hapus cache app"
-        echo "  [8]  Telepon       [17] Buka URL di HP"
-        echo "  [9]  Spotify       [18] App lain (nama paket)"
-        echo "  [19] ADB Bebas"
-        echo "  [0]  Kembali"
+        header
+        echo -e "${C}[ APLIKASI ]${NC}\n"
+        echo -e "  ${G}[1]${NC}  WhatsApp      ${G}[10]${NC} TikTok"
+        echo -e "  ${G}[2]${NC}  Instagram     ${G}[11]${NC} Gmail"
+        echo -e "  ${G}[3]${NC}  YouTube       ${G}[12]${NC} Telegram"
+        echo -e "  ${G}[4]${NC}  Chrome        ${G}[13]${NC} Facebook"
+        echo -e "  ${G}[5]${NC}  Kamera        ${G}[14]${NC} Google Maps"
+        echo -e "  ${G}[6]${NC}  Galeri        ${G}[15]${NC} Tutup paksa app"
+        echo -e "  ${G}[7]${NC}  Pengaturan    ${G}[16]${NC} Hapus cache app"
+        echo -e "  ${G}[8]${NC}  Telepon       ${G}[17]${NC} Buka URL di HP"
+        echo -e "  ${G}[9]${NC}  Spotify       ${G}[18]${NC} App lain (paket)"
+        echo -e "  ${C}[19]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC}  Kembali"
         echo ""
         read -rp "Pilih [0-19]: " P
         case "$P" in
-            1)  adb_run shell monkey -p com.whatsapp 1 >/dev/null 2>&1              ; echo -e "${GREEN}[OK] WhatsApp.${NC}"   ; pause ;;
-            2)  adb_run shell monkey -p com.instagram.android 1 >/dev/null 2>&1      ; echo -e "${GREEN}[OK] Instagram.${NC}"  ; pause ;;
-            3)  adb_run shell monkey -p com.google.android.youtube 1 >/dev/null 2>&1 ; echo -e "${GREEN}[OK] YouTube.${NC}"    ; pause ;;
-            4)  adb_run shell monkey -p com.android.chrome 1 >/dev/null 2>&1         ; echo -e "${GREEN}[OK] Chrome.${NC}"     ; pause ;;
-            5)  adb_run shell am start -a android.media.action.IMAGE_CAPTURE >/dev/null 2>&1 ; echo -e "${GREEN}[OK] Kamera.${NC}" ; pause ;;
-            6)  adb_run shell am start -a android.intent.action.MAIN -c android.intent.category.APP_GALLERY >/dev/null 2>&1 ; echo -e "${GREEN}[OK] Galeri.${NC}" ; pause ;;
-            7)  adb_run shell am start -a android.settings.SETTINGS >/dev/null 2>&1  ; echo -e "${GREEN}[OK] Pengaturan.${NC}" ; pause ;;
-            8)  adb_run shell am start -a android.intent.action.DIAL >/dev/null 2>&1 ; echo -e "${GREEN}[OK] Telepon.${NC}"    ; pause ;;
-            9)  adb_run shell monkey -p com.spotify.music 1 >/dev/null 2>&1          ; echo -e "${GREEN}[OK] Spotify.${NC}"    ; pause ;;
-            10) adb_run shell monkey -p com.zhiliaoapp.musically 1 >/dev/null 2>&1   ; echo -e "${GREEN}[OK] TikTok.${NC}"     ; pause ;;
-            11) adb_run shell monkey -p com.google.android.gm 1 >/dev/null 2>&1      ; echo -e "${GREEN}[OK] Gmail.${NC}"      ; pause ;;
-            12) adb_run shell monkey -p org.telegram.messenger 1 >/dev/null 2>&1     ; echo -e "${GREEN}[OK] Telegram.${NC}"   ; pause ;;
-            13) adb_run shell monkey -p com.facebook.katana 1 >/dev/null 2>&1        ; echo -e "${GREEN}[OK] Facebook.${NC}"   ; pause ;;
-            14) adb_run shell monkey -p com.google.android.apps.maps 1 >/dev/null 2>&1 ; echo -e "${GREEN}[OK] Maps.${NC}"     ; pause ;;
-            15) read -rp "Nama paket: " PKG ; adb_run shell am force-stop "$PKG" ; echo -e "${GREEN}[OK] Ditutup paksa.${NC}" ; pause ;;
-            16) read -rp "Nama paket: " PKG ; adb_run shell pm clear "$PKG"       ; echo -e "${GREEN}[OK] Cache dihapus.${NC}" ; pause ;;
-            17) read -rp "URL: " URL ; adb_run shell am start -a android.intent.action.VIEW -d "$URL" ; echo -e "${GREEN}[OK] URL dibuka.${NC}" ; pause ;;
-            18) read -rp "Nama paket: " PKG ; adb_run shell monkey -p "$PKG" 1 >/dev/null 2>&1 ; echo -e "${GREEN}[OK] Dibuka.${NC}" ; pause ;;
-            19) adb_bebas_inline ;;
+            1)  ashell monkey -p com.whatsapp 1 &>/dev/null;               echo -e "${G}[OK] WhatsApp.${NC}";   lanjut ;;
+            2)  ashell monkey -p com.instagram.android 1 &>/dev/null;      echo -e "${G}[OK] Instagram.${NC}";  lanjut ;;
+            3)  ashell monkey -p com.google.android.youtube 1 &>/dev/null;  echo -e "${G}[OK] YouTube.${NC}";    lanjut ;;
+            4)  ashell monkey -p com.android.chrome 1 &>/dev/null;         echo -e "${G}[OK] Chrome.${NC}";     lanjut ;;
+            5)  ashell am start -a android.media.action.IMAGE_CAPTURE &>/dev/null; echo -e "${G}[OK] Kamera.${NC}"; lanjut ;;
+            6)  ashell am start -a android.intent.action.MAIN -c android.intent.category.APP_GALLERY &>/dev/null
+                echo -e "${G}[OK] Galeri.${NC}"; lanjut ;;
+            7)  ashell am start -a android.settings.SETTINGS &>/dev/null;  echo -e "${G}[OK] Pengaturan.${NC}"; lanjut ;;
+            8)  ashell am start -a android.intent.action.DIAL &>/dev/null; echo -e "${G}[OK] Telepon.${NC}";    lanjut ;;
+            9)  ashell monkey -p com.spotify.music 1 &>/dev/null;          echo -e "${G}[OK] Spotify.${NC}";    lanjut ;;
+            10) ashell monkey -p com.zhiliaoapp.musically 1 &>/dev/null;   echo -e "${G}[OK] TikTok.${NC}";     lanjut ;;
+            11) ashell monkey -p com.google.android.gm 1 &>/dev/null;      echo -e "${G}[OK] Gmail.${NC}";      lanjut ;;
+            12) ashell monkey -p org.telegram.messenger 1 &>/dev/null;     echo -e "${G}[OK] Telegram.${NC}";   lanjut ;;
+            13) ashell monkey -p com.facebook.katana 1 &>/dev/null;        echo -e "${G}[OK] Facebook.${NC}";   lanjut ;;
+            14) ashell monkey -p com.google.android.apps.maps 1 &>/dev/null; echo -e "${G}[OK] Maps.${NC}";     lanjut ;;
+            15) read -rp "Nama paket: " PKG; ashell am force-stop "$PKG"; echo -e "${G}[OK] Ditutup.${NC}"; lanjut ;;
+            16) read -rp "Nama paket: " PKG; ashell pm clear "$PKG"; echo -e "${G}[OK] Cache dihapus.${NC}"; lanjut ;;
+            17) read -rp "URL: " URL; ashell am start -a android.intent.action.VIEW -d "$URL"; echo -e "${G}[OK] URL dibuka.${NC}"; lanjut ;;
+            18) read -rp "Nama paket: " PKG; ashell monkey -p "$PKG" 1 &>/dev/null; echo -e "${G}[OK] Dibuka.${NC}"; lanjut ;;
+            19) adb_bebas_baru "ADB Bebas - Aplikasi" ;;
             0)  return ;;
         esac
     done
 }
 
 # ============================================================
-# KIRIM PESAN
-# ============================================================
 menu_pesan() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  KIRIM PESAN   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
-        echo ""
-        echo "  [1] WhatsApp (langsung terkirim)"
-        echo "  [2] SMS (langsung terkirim)"
-        echo "  [3] Telegram (langsung terkirim)"
-        echo "  [4] Telepon nomor"
-        echo "  [8] ADB Bebas"
-        echo "  [0] Kembali"
+        header
+        echo -e "${C}[ KIRIM PESAN ]${NC}\n"
+        echo -e "  ${G}[1]${NC} WhatsApp (langsung terkirim)"
+        echo -e "  ${G}[2]${NC} SMS (langsung terkirim)"
+        echo -e "  ${G}[3]${NC} Telegram (langsung terkirim)"
+        echo -e "  ${G}[4]${NC} Telepon nomor"
+        echo -e "  ${C}[8]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC} Kembali"
         echo ""
         read -rp "Pilih [0-8]: " P
         case "$P" in
             1)  read -rp "Nomor WA (628xxx): " NOWA
                 read -rp "Isi pesan: " PESANWA
-                adb_run shell am start -a android.intent.action.VIEW -d "https://api.whatsapp.com/send?phone=${NOWA}&text=${PESANWA}"
-                sleep 4 && adb_run shell input keyevent 66
-                echo -e "${GREEN}[OK] WA terkirim.${NC}" ; pause ;;
+                ashell am start -a android.intent.action.VIEW -d "https://api.whatsapp.com/send?phone=$NOWA&text=$PESANWA"
+                sleep 4; ashell input keyevent 66
+                echo -e "${G}[OK] WA terkirim.${NC}"; lanjut ;;
             2)  read -rp "Nomor SMS: " NOSMS
                 read -rp "Isi pesan: " ISISMS
-                adb_run shell am start -a android.intent.action.SENDTO -d "smsto:${NOSMS}" --es sms_body "$ISISMS" --ez exit_on_sent true
-                sleep 4 && adb_run shell input keyevent 66
-                echo -e "${GREEN}[OK] SMS terkirim.${NC}" ; pause ;;
+                ashell am start -a android.intent.action.SENDTO -d "smsto:$NOSMS" --es sms_body "$ISISMS" --ez exit_on_sent true
+                sleep 4; ashell input keyevent 66
+                echo -e "${G}[OK] SMS terkirim.${NC}"; lanjut ;;
             3)  read -rp "Username Telegram (tanpa @): " USERTG
                 read -rp "Isi pesan: " ISITG
-                adb_run shell am start -a android.intent.action.VIEW -d "tg://resolve?domain=${USERTG}&text=${ISITG}"
-                sleep 4 && adb_run shell input keyevent 66
-                echo -e "${GREEN}[OK] TG terkirim.${NC}" ; pause ;;
+                ashell am start -a android.intent.action.VIEW -d "tg://resolve?domain=$USERTG&text=$ISITG"
+                sleep 4; ashell input keyevent 66
+                echo -e "${G}[OK] TG terkirim.${NC}"; lanjut ;;
             4)  read -rp "Nomor: " NOTELP
-                adb_run shell am start -a android.intent.action.CALL -d "tel:${NOTELP}"
-                echo -e "${GREEN}[OK] Menelepon.${NC}" ; pause ;;
-            8)  adb_bebas_inline ;;
+                ashell am start -a android.intent.action.CALL -d "tel:$NOTELP"
+                echo -e "${G}[OK] Menelepon.${NC}"; lanjut ;;
+            8)  adb_bebas_baru "ADB Bebas - Pesan" ;;
             0)  return ;;
         esac
     done
 }
 
-# ============================================================
-# FILE MANAGER
 # ============================================================
 menu_file() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  FILE MANAGER   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
-        echo ""
-        echo "  [1] Lihat /sdcard"
-        echo "  [2] Lihat folder tertentu"
-        echo "  [3] Kirim file laptop ke HP"
-        echo "  [4] Ambil file HP ke Desktop"
-        echo "  [5] Hapus file di HP"
-        echo "  [6] Buat folder di HP"
-        echo "  [7] Ukuran folder"
-        echo "  [8] Cari file"
-        echo "  [9] ADB Bebas"
-        echo "  [0] Kembali"
+        header
+        echo -e "${C}[ FILE MANAGER ]${NC}\n"
+        echo -e "  ${G}[1]${NC} Lihat /sdcard"
+        echo -e "  ${G}[2]${NC} Lihat folder tertentu"
+        echo -e "  ${G}[3]${NC} Kirim file laptop → HP"
+        echo -e "  ${G}[4]${NC} Ambil file HP → laptop"
+        echo -e "  ${G}[5]${NC} Hapus file di HP"
+        echo -e "  ${G}[6]${NC} Buat folder di HP"
+        echo -e "  ${G}[7]${NC} Ukuran folder"
+        echo -e "  ${G}[8]${NC} Cari file"
+        echo -e "  ${C}[9]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC} Kembali"
         echo ""
         read -rp "Pilih [0-9]: " P
         case "$P" in
-            1)  adb_run shell ls -la /sdcard/ ; pause ;;
-            2)  read -rp "Path folder: " FP ; adb_run shell ls -la "$FP" ; pause ;;
+            1)  ashell ls -la /sdcard/; lanjut ;;
+            2)  read -rp "Path folder: " FP; ashell ls -la "$FP"; lanjut ;;
             3)  read -rp "Path file di laptop: " FS
                 read -rp "Tujuan di HP: " FD
-                adb_run push "$FS" "$FD"
-                echo -e "${GREEN}[OK] Terkirim.${NC}" ; pause ;;
+                arun push "$FS" "$FD"
+                echo -e "${G}[OK] Terkirim.${NC}"; lanjut ;;
             4)  read -rp "Path file di HP: " FH
-                mkdir -p "$DESKTOP"
-                adb_run pull "$FH" "$DESKTOP/"
-                echo -e "${GREEN}[OK] Disimpan di Desktop.${NC}" ; pause ;;
+                arun pull "$FH" "$DESKTOP/"
+                echo -e "${G}[OK] Disimpan di $DESKTOP.${NC}"; lanjut ;;
             5)  read -rp "Path file dihapus: " FD
-                read -rp "Yakin? (YES): " FK
-                if [[ "${FK^^}" == "YES" ]]; then
-                    adb_run shell rm -rf "$FD"
-                    echo -e "${GREEN}[OK] Dihapus.${NC}"
-                else echo -e "${YELLOW}[BATAL]${NC}"; fi
-                pause ;;
-            6)  read -rp "Nama folder baru: " FM
-                adb_run shell mkdir "$FM"
-                echo -e "${GREEN}[OK] Folder dibuat.${NC}" ; pause ;;
-            7)  read -rp "Path folder: " FS ; adb_run shell du -sh "$FS" ; pause ;;
+                read -rp "Yakin hapus? (YES): " FK
+                [[ "$FK" == "YES" ]] && ashell rm -rf "$FD" && echo -e "${G}[OK] Dihapus.${NC}" || echo -e "${Y}[BATAL]${NC}"
+                lanjut ;;
+            6)  read -rp "Path folder baru: " FM; ashell mkdir "$FM"; echo -e "${G}[OK] Dibuat.${NC}"; lanjut ;;
+            7)  read -rp "Path folder: " FS; ashell du -sh "$FS"; lanjut ;;
             8)  read -rp "Nama file (contoh *.jpg): " FN
                 read -rp "Cari di: " FW
-                adb_run shell find "$FW" -name "$FN" ; pause ;;
-            9)  adb_bebas_inline ;;
+                ashell find "$FW" -name "$FN"; lanjut ;;
+            9)  adb_bebas_baru "ADB Bebas - File" ;;
             0)  return ;;
         esac
     done
 }
 
 # ============================================================
-# INFO HP
-# ============================================================
 info_hp() {
-    clear
-    echo -e "${GREEN}"
-    echo "================================================"
-    echo "  INFO HP   [IP: ${HP_IP}]"
-    echo -e "================================================${NC}"
+    header
+    echo -e "${C}[ INFO DAN STATUS HP ]${NC}\n"
+    echo -e "${Y}--- MODEL ---${NC}"
+    ashell getprop ro.product.model
+    ashell getprop ro.build.version.release
+    echo -e "\n${Y}--- BATERAI ---${NC}"
+    ashell dumpsys battery | grep -i "level\|status\|temperature"
+    echo -e "\n${Y}--- RAM ---${NC}"
+    ashell cat /proc/meminfo | grep -i "MemTotal\|MemFree\|MemAvailable"
+    echo -e "\n${Y}--- STORAGE ---${NC}"
+    ashell df /sdcard
+    echo -e "\n${Y}--- JARINGAN ---${NC}"
+    ashell getprop gsm.operator.alpha
+    ashell getprop gsm.network.type
+    echo -e "\n${Y}--- RESOLUSI ---${NC}"
+    ashell wm size
+    echo -e "\n${Y}--- APP AKTIF ---${NC}"
+    ashell dumpsys window | grep mCurrentFocus
     echo ""
-    MODEL=$(adb_run shell getprop ro.product.model 2>/dev/null | tr -d '\r')
-    ANDROID=$(adb_run shell getprop ro.build.version.release 2>/dev/null | tr -d '\r')
-    echo "Model    : $MODEL"
-    echo "Android  : $ANDROID"
-    echo ""
-    echo "--- BATERAI ---"
-    adb_run shell dumpsys battery | grep -i "level\|status\|temperature"
-    echo ""
-    echo "--- RAM ---"
-    adb_run shell cat /proc/meminfo | grep -i "MemTotal\|MemFree\|MemAvailable"
-    echo ""
-    echo "--- STORAGE ---"
-    adb_run shell df /sdcard
-    echo ""
-    echo "--- JARINGAN ---"
-    adb_run shell getprop gsm.operator.alpha
-    adb_run shell getprop gsm.network.type
-    echo ""
-    echo "--- APP AKTIF ---"
-    adb_run shell dumpsys window 2>/dev/null | grep "mCurrentFocus"
-    echo ""
-    pause
+    read -rp "[8] ADB Bebas (jendela baru)  [0] Kembali: " P
+    [[ "$P" == "8" ]] && adb_bebas_baru "ADB Bebas - Info"
 }
 
 # ============================================================
-# LOKASI HP
-# ============================================================
 menu_lokasi() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  LOKASI HP   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
+        header
+        echo -e "${C}[ LOKASI HP ]${NC}\n"
+        ashell dumpsys location | grep -i "last known\|latitude\|longitude" | head -5
         echo ""
-        adb_run shell dumpsys location 2>/dev/null | grep -i "last known"
-        echo ""
-        echo "  [1] Buka android.com/find"
-        echo "  [2] Aktifkan GPS"
-        echo "  [3] Matikan GPS"
-        echo "  [8] ADB Bebas"
-        echo "  [0] Kembali"
+        echo -e "  ${G}[1]${NC} Buka android.com/find di browser"
+        echo -e "  ${G}[2]${NC} Aktifkan GPS"
+        echo -e "  ${G}[3]${NC} Matikan GPS"
+        echo -e "  ${C}[8]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC} Kembali"
         echo ""
         read -rp "Pilih: " P
         case "$P" in
-            1) xdg-open "https://android.com/find" 2>/dev/null & ;;
-            2) adb_run shell settings put secure location_mode 3 ; echo -e "${GREEN}[OK] GPS aktif.${NC}" ; pause ;;
-            3) adb_run shell settings put secure location_mode 0 ; echo -e "${GREEN}[OK] GPS mati.${NC}"  ; pause ;;
-            8) adb_bebas_inline ;;
+            1) xdg-open "https://android.com/find" 2>/dev/null || \
+               echo -e "${Y}Buka di browser: https://android.com/find${NC}"; lanjut ;;
+            2) ashell settings put secure location_mode 3; echo -e "${G}[OK] GPS aktif.${NC}"; lanjut ;;
+            3) ashell settings put secure location_mode 0; echo -e "${G}[OK] GPS mati.${NC}";  lanjut ;;
+            8) adb_bebas_baru "ADB Bebas - Lokasi" ;;
             0) return ;;
         esac
     done
 }
 
 # ============================================================
-# NOTIFIKASI
-# ============================================================
 menu_notifikasi() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  NOTIFIKASI   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
-        echo ""
-        echo "  [1] Kirim notifikasi ke HP"
-        echo "  [2] Buka panel notifikasi"
-        echo "  [3] Tutup panel notifikasi"
-        echo "  [8] ADB Bebas"
-        echo "  [0] Kembali"
+        header
+        echo -e "${C}[ NOTIFIKASI ]${NC}\n"
+        echo -e "  ${G}[1]${NC} Kirim notifikasi ke HP"
+        echo -e "  ${G}[2]${NC} Buka panel notifikasi"
+        echo -e "  ${G}[3]${NC} Tutup panel notifikasi"
+        echo -e "  ${C}[8]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC} Kembali"
         echo ""
         read -rp "Pilih: " P
         case "$P" in
             1)  read -rp "Judul: " NTITLE
                 read -rp "Isi: " NBODY
-                adb_run shell cmd notification post -S bigtext -t "$NTITLE" Tag "$NBODY"
-                echo -e "${GREEN}[OK] Notifikasi terkirim.${NC}" ; pause ;;
-            2)  adb_run shell cmd statusbar expand-notifications ; echo -e "${GREEN}[OK] Panel dibuka.${NC}"  ; pause ;;
-            3)  adb_run shell cmd statusbar collapse             ; echo -e "${GREEN}[OK] Panel ditutup.${NC}" ; pause ;;
-            8)  adb_bebas_inline ;;
+                ashell cmd notification post -S bigtext -t "$NTITLE" Tag "$NBODY"
+                echo -e "${G}[OK] Notifikasi terkirim.${NC}"; lanjut ;;
+            2)  ashell cmd statusbar expand-notifications; echo -e "${G}[OK] Panel dibuka.${NC}";  lanjut ;;
+            3)  ashell cmd statusbar collapse;             echo -e "${G}[OK] Panel ditutup.${NC}"; lanjut ;;
+            8)  adb_bebas_baru "ADB Bebas - Notif" ;;
             0)  return ;;
         esac
     done
 }
 
 # ============================================================
-# MEDIA PLAYER
-# ============================================================
 menu_media() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  MEDIA PLAYER   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
-        echo ""
-        echo "  [1] Play/Pause  [4] Vol naik"
-        echo "  [2] Next        [5] Vol turun"
-        echo "  [3] Previous    [6] Mute"
-        echo "  [8] ADB Bebas"
-        echo "  [0] Kembali"
+        header
+        echo -e "${C}[ MEDIA PLAYER ]${NC}\n"
+        echo -e "  ${G}[1]${NC} Play/Pause  ${G}[4]${NC} Vol naik"
+        echo -e "  ${G}[2]${NC} Next        ${G}[5]${NC} Vol turun"
+        echo -e "  ${G}[3]${NC} Previous    ${G}[6]${NC} Mute"
+        echo -e "  ${C}[8]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC} Kembali"
         echo ""
         read -rp "Pilih: " P
         case "$P" in
-            1) adb_run shell input keyevent 85  ; echo -e "${GREEN}[OK] Play/Pause.${NC}" ; pause ;;
-            2) adb_run shell input keyevent 87  ; echo -e "${GREEN}[OK] Next.${NC}"        ; pause ;;
-            3) adb_run shell input keyevent 88  ; echo -e "${GREEN}[OK] Previous.${NC}"    ; pause ;;
-            4) adb_run shell input keyevent 24  ; echo -e "${GREEN}[OK] Vol naik.${NC}"    ; pause ;;
-            5) adb_run shell input keyevent 25  ; echo -e "${GREEN}[OK] Vol turun.${NC}"   ; pause ;;
-            6) adb_run shell input keyevent 164 ; echo -e "${GREEN}[OK] Mute.${NC}"        ; pause ;;
-            8) adb_bebas_inline ;;
+            1) ashell input keyevent 85;  echo -e "${G}[OK] Play/Pause.${NC}"; lanjut ;;
+            2) ashell input keyevent 87;  echo -e "${G}[OK] Next.${NC}";       lanjut ;;
+            3) ashell input keyevent 88;  echo -e "${G}[OK] Previous.${NC}";   lanjut ;;
+            4) ashell input keyevent 24;  echo -e "${G}[OK] Vol naik.${NC}";   lanjut ;;
+            5) ashell input keyevent 25;  echo -e "${G}[OK] Vol turun.${NC}";  lanjut ;;
+            6) ashell input keyevent 164; echo -e "${G}[OK] Mute.${NC}";       lanjut ;;
+            8) adb_bebas_baru "ADB Bebas - Media" ;;
             0) return ;;
         esac
     done
 }
 
 # ============================================================
-# KAMERA
-# ============================================================
 menu_kamera() {
     while true; do
-        clear
-        echo -e "${GREEN}"
-        echo "================================================"
-        echo "  KAMERA   [IP: ${HP_IP}]"
-        echo -e "================================================${NC}"
-        echo ""
-        echo "  [1] Buka kamera + tampilkan di laptop"
-        echo "  [2] Ambil foto ke Desktop"
-        echo "  [3] Rekam video"
-        echo "  [8] ADB Bebas"
-        echo "  [0] Kembali"
+        header
+        echo -e "${C}[ KAMERA ]${NC}\n"
+        echo -e "  ${G}[1]${NC} Buka kamera + tampilkan di laptop"
+        echo -e "  ${G}[2]${NC} Ambil foto ke Desktop"
+        echo -e "  ${G}[3]${NC} Rekam video"
+        echo -e "  ${C}[8]${NC} ADB Bebas ${Y}← jendela baru${NC}"
+        echo -e "  ${R}[0]${NC} Kembali"
         echo ""
         read -rp "Pilih: " P
         case "$P" in
-            1)  adb_run shell am start -a android.media.action.IMAGE_CAPTURE >/dev/null
-                scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --no-audio &
-                echo -e "${GREEN}[OK] Kamera + layar ditampilkan.${NC}" ; pause ;;
-            2)  adb_run shell am start -a android.media.action.IMAGE_CAPTURE >/dev/null
-                sleep 2
-                adb_run shell input keyevent 27
-                sleep 2
+            1)  [[ -z "$DISPLAY" && -z "$WAYLAND_DISPLAY" ]] && export DISPLAY=:0
+                ashell am start -a android.media.action.IMAGE_CAPTURE &>/dev/null
+                scrcpy --tcpip="${HP_IP}:5555" --stay-awake --window-title "Layar-HP" --no-audio &>/dev/null &
+                echo -e "${G}[OK] Kamera + layar ditampilkan.${NC}"; lanjut ;;
+            2)  ashell am start -a android.media.action.IMAGE_CAPTURE &>/dev/null
+                sleep 2; ashell input keyevent 27; sleep 2
                 mkdir -p "$DESKTOP/foto_hp"
-                adb_run pull /sdcard/DCIM/Camera/ "$DESKTOP/foto_hp/" >/dev/null
-                echo -e "${GREEN}[OK] Foto di Desktop/foto_hp.${NC}" ; pause ;;
-            3)  adb_run shell am start -a android.media.action.VIDEO_CAPTURE >/dev/null
-                sleep 2
-                adb_run shell input keyevent 27
-                echo "Rekaman dimulai. Tekan Enter untuk berhenti..."
-                read -r
-                adb_run shell input keyevent 27
-                echo -e "${GREEN}[OK] Rekaman selesai.${NC}" ; pause ;;
-            8)  adb_bebas_inline ;;
+                arun pull /sdcard/DCIM/Camera/ "$DESKTOP/foto_hp/" &>/dev/null
+                echo -e "${G}[OK] Foto disimpan di $DESKTOP/foto_hp.${NC}"; lanjut ;;
+            3)  ashell am start -a android.media.action.VIDEO_CAPTURE &>/dev/null
+                sleep 2; ashell input keyevent 27
+                echo -e "${Y}Rekaman dimulai. Tekan Enter untuk berhenti...${NC}"; read -r
+                ashell input keyevent 27
+                echo -e "${G}[OK] Rekaman selesai.${NC}"; lanjut ;;
+            8)  adb_bebas_baru "ADB Bebas - Kamera" ;;
             0)  return ;;
         esac
     done
 }
 
 # ============================================================
-# MONITOR REAL-TIME
+# JENDELA BARU
 # ============================================================
 buka_monitor() {
-    echo -e "${CYAN}[INFO] Menjalankan Monitor Real-Time (Ctrl+C untuk berhenti)...${NC}"
-    sleep 1
-    # Coba buka di terminal baru, jika gagal jalankan di terminal yang sama
-    if command -v gnome-terminal &>/dev/null; then
-        gnome-terminal -- bash -c "
-            while true; do
-                clear
-                echo '=============================='
-                echo \" MONITOR HP - ${HP_IP}\"
-                echo \" \$(date)\"
-                echo '=============================='
-                echo ''
-                echo '[BATERAI]'
-                adb -s ${HP_IP}:5555 shell dumpsys battery 2>/dev/null | grep level
-                echo ''
-                echo '[RAM]'
-                adb -s ${HP_IP}:5555 shell cat /proc/meminfo 2>/dev/null | grep MemAvailable
-                echo ''
-                echo '[APP AKTIF]'
-                adb -s ${HP_IP}:5555 shell dumpsys window 2>/dev/null | grep mCurrentFocus
-                echo ''
-                echo '[JARINGAN]'
-                adb -s ${HP_IP}:5555 shell getprop gsm.network.type 2>/dev/null
-                echo ''
-                echo 'Refresh dalam 5 detik... (Ctrl+C untuk berhenti)'
-                sleep 5
-            done
-        " &
-    else
-        # Jalankan inline jika tidak ada gnome-terminal
-        while true; do
-            clear
-            echo "=============================="
-            echo " MONITOR HP - ${HP_IP}"
-            echo " $(date)"
-            echo "=============================="
-            echo ""
-            echo "[BATERAI]"
-            adb_run shell dumpsys battery 2>/dev/null | grep level
-            echo ""
-            echo "[RAM]"
-            adb_run shell cat /proc/meminfo 2>/dev/null | grep MemAvailable
-            echo ""
-            echo "[APP AKTIF]"
-            adb_run shell dumpsys window 2>/dev/null | grep mCurrentFocus
-            echo ""
-            echo "Refresh dalam 5 detik... (Ctrl+C untuk berhenti)"
-            sleep 5
-        done
-    fi
-    echo -e "${GREEN}[OK] Monitor berjalan di jendela baru.${NC}"
-    pause
+    local CMD_BLOK
+    CMD_BLOK=$(cat << MONEOF
+while true; do
+    clear
+    echo -e '\033[0;35m=============================='
+    echo "  MONITOR HP - $HP_IP"
+    echo "  \$(date '+%Y-%m-%d %H:%M:%S')"
+    echo -e '==============================\033[0m'
+    echo ""
+    echo -e '\033[1;33m[BATERAI]\033[0m'
+    adb -s ${HP_IP}:5555 shell dumpsys battery 2>/dev/null | grep -i "level\|status\|temperature"
+    echo ""
+    echo -e '\033[1;33m[RAM]\033[0m'
+    adb -s ${HP_IP}:5555 shell cat /proc/meminfo 2>/dev/null | grep -i "MemAvailable\|MemTotal"
+    echo ""
+    echo -e '\033[1;33m[APP AKTIF]\033[0m'
+    adb -s ${HP_IP}:5555 shell dumpsys window 2>/dev/null | grep mCurrentFocus
+    echo ""
+    echo -e '\033[1;33m[JARINGAN]\033[0m'
+    adb -s ${HP_IP}:5555 shell getprop gsm.network.type 2>/dev/null
+    adb -s ${HP_IP}:5555 shell getprop gsm.operator.alpha 2>/dev/null
+    echo ""
+    echo -e '\033[0;36mRefresh tiap 5 detik... Ctrl+C untuk tutup\033[0m'
+    sleep 5
+done
+MONEOF
+)
+    buka_terminal "Monitor HP Real-Time" "$CMD_BLOK"
+    echo -e "${G}[OK] Jendela Monitor dibuka ($TERMINAL).${NC}"
+    lanjut
 }
 
-# ============================================================
-# LOGCAT LIVE
-# ============================================================
 buka_logcat() {
-    echo -e "${CYAN}[INFO] Menjalankan Logcat Live (Ctrl+C untuk berhenti)...${NC}"
-    echo "=============================="
-    echo " LOGCAT LIVE - ${HP_IP}"
-    echo " Ctrl+C untuk berhenti"
-    echo "=============================="
-    echo ""
-    adb_run logcat -s NotificationService:D ActivityManager:I "*:E"
-    pause
+    local CMD_BLOK
+    CMD_BLOK=$(cat << LOGEOF
+echo -e '\033[0;36m=============================='
+echo "  LOGCAT LIVE - $HP_IP"
+echo "  Ctrl+C untuk berhenti"
+echo -e '==============================\033[0m'
+echo ""
+adb -s ${HP_IP}:5555 logcat -s NotificationService:D ActivityManager:I '*:E'
+LOGEOF
+)
+    buka_terminal "Logcat Live HP" "$CMD_BLOK"
+    echo -e "${G}[OK] Jendela Logcat dibuka ($TERMINAL).${NC}"
+    lanjut
 }
 
-# ============================================================
-# ADB BEBAS (inline)
-# ============================================================
-adb_bebas_inline() {
-    clear
-    echo -e "${BLUE}"
-    echo "=============================="
-    echo "  ADB BEBAS - ${HP_IP}"
-    echo "  Ketik 'exit' untuk kembali"
-    echo -e "==============================${NC}"
-    echo ""
-    while true; do
-        read -rp "adb shell \$ " CMD
-        [[ "${CMD,,}" == "exit" || -z "$CMD" ]] && break
-        adb_run shell "$CMD"
-        echo ""
-    done
-}
-
-buka_adb() {
-    adb_bebas_inline
-}
-
-# ============================================================
-# HISTORY
-# ============================================================
 buka_history() {
-    clear
-    echo -e "${GREEN}"
-    echo "=============================="
-    echo "  HISTORY PERINTAH"
-    echo -e "==============================${NC}"
-    echo ""
     if [[ ! -f "$LOGFILE" ]]; then
-        echo "Belum ada history."
-    else
-        cat "$LOGFILE"
+        echo -e "${Y}Belum ada history.${NC}"; lanjut; return
     fi
-    echo ""
-    pause
+    local CMD_BLOK
+    CMD_BLOK=$(cat << HISTEOF
+echo -e '\033[0;36m=============================='
+echo '  HISTORY PERINTAH'
+echo -e '==============================\033[0m'
+echo ""
+cat $LOGFILE
+echo ""
+HISTEOF
+)
+    buka_terminal "History Perintah" "$CMD_BLOK"
+    echo -e "${G}[OK] Jendela History dibuka ($TERMINAL).${NC}"
+    lanjut
 }
 
-# ============================================================
-# PUTUSKAN KONEKSI
-# ============================================================
 putuskan() {
     adb disconnect
     HP_IP=""
-    echo -e "${GREEN}[OK] Koneksi diputuskan.${NC}"
-    pause
+    echo -e "${G}[OK] Koneksi diputuskan.${NC}"
+    log "DISCONNECT"
+    lanjut
 }
 
 # ============================================================
-# KELUAR
+# INSTALL DEPENDENCIES
 # ============================================================
-keluar() {
-    clear
-    echo -e "${GREEN}Sampai jumpa!${NC}"
-    sleep 1
-    exit 0
+install_deps() {
+    echo -e "${C}[INFO] Mengecek dan menginstall dependencies...${NC}"
+    # ADB
+    if ! command -v adb &>/dev/null; then
+        echo -e "${Y}Install ADB...${NC}"
+        sudo apt install -y adb 2>/dev/null || sudo pacman -S --noconfirm android-tools 2>/dev/null
+    fi
+    # scrcpy
+    if ! command -v scrcpy &>/dev/null; then
+        echo -e "${Y}Install scrcpy...${NC}"
+        sudo apt install -y scrcpy 2>/dev/null || sudo snap install scrcpy 2>/dev/null
+    fi
+    # Terminal emulator fallback
+    if [[ "$TERMINAL" == "none" ]]; then
+        echo -e "${Y}Install xterm sebagai terminal fallback...${NC}"
+        sudo apt install -y xterm 2>/dev/null
+        TERMINAL=$(cari_terminal)
+    fi
+    echo -e "${G}[OK] Semua dependencies siap.${NC}"
+    echo -e "${C}Terminal yang digunakan: $TERMINAL${NC}"
+    lanjut
 }
 
 # ============================================================
 # ENTRY POINT
 # ============================================================
-check_adb
+# Cek argumen
+case "${1:-}" in
+    --install) install_deps; exit 0 ;;
+    --help)
+        echo "Penggunaan: bash kontrol_hp.sh [opsi]"
+        echo "  (tanpa opsi)  : Jalankan program"
+        echo "  --install     : Install semua dependencies"
+        echo "  --help        : Tampilkan bantuan ini"
+        echo ""
+        echo "Install global (akses dari mana saja):"
+        echo "  sudo cp kontrol_hp.sh /usr/local/bin/kontrolhp"
+        echo "  sudo chmod +x /usr/local/bin/kontrolhp"
+        echo "  kontrolhp"
+        exit 0 ;;
+esac
+
+cek_adb
 menu_utama
