@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # ============================================================
-#   KONTROL HP ANDROID v6.0 - Linux / Kali Linux
+#   NEXUS - KONTROL HP ANDROID v6.0
 #   Kompatibel: Kali, Ubuntu, Debian, Parrot, Arch
+#
+#   INSTALL (1 perintah):
+#   curl -fsSL https://raw.githubusercontent.com/troltri7-hue/GII/main/NEXUS \
+#     | sudo tee /usr/local/bin/NEXUS > /dev/null \
+#     && sudo chmod +x /usr/local/bin/NEXUS
+#
+#   JALANKAN: NEXUS
 # ============================================================
 
 HP_IP=""
@@ -100,7 +107,7 @@ lanjut() { echo -e "\n${C}Tekan Enter untuk kembali...${NC}"; read -r; }
 header() {
     clear
     echo -e "${P}================================================${NC}"
-    echo -e "${W}  KONTROL HP ANDROID v6.0${NC}"
+    echo -e "${W}  NEXUS - KONTROL HP ANDROID v6.0${NC}"
     echo -e "${C}  Terminal: ${Y}$TERMINAL${NC}"
     echo -e "${C}  IP HP   : ${Y}${HP_IP:-[belum terhubung]}${NC}"
     echo -e "${P}================================================${NC}"
@@ -742,15 +749,15 @@ install_deps() {
 case "${1:-}" in
     --install) install_deps; exit 0 ;;
     --help)
-        echo "Penggunaan: bash kontrol_hp.sh [opsi]"
+        echo "Penggunaan: NEXUS [opsi]"
         echo "  (tanpa opsi)  : Jalankan program"
         echo "  --install     : Install semua dependencies"
         echo "  --help        : Tampilkan bantuan ini"
         echo ""
         echo "Install global (akses dari mana saja):"
-        echo "  sudo cp kontrol_hp.sh /usr/local/bin/kontrolhp"
-        echo "  sudo chmod +x /usr/local/bin/kontrolhp"
-        echo "  kontrolhp"
+        echo "  curl -fsSL https://raw.githubusercontent.com/troltri7-hue/GII/main/NEXUS | sudo tee /usr/local/bin/NEXUS > /dev/null"
+        echo "  sudo chmod +x /usr/local/bin/NEXUS"
+        echo "  NEXUS"
         exit 0 ;;
 esac
 
